@@ -1,0 +1,10 @@
+[profile.default]
+src = "contracts"
+libs = ["lib"]
+solc = "0.8.25"
+ 
+remappings = [
+    "@unruggable-test=lib/unruggable-gateways/",
+    "@unruggable/gateways=node_modules/@unruggable/gateways/contracts",
+    "@contracts=contracts"
+]
