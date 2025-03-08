@@ -1,0 +1,39 @@
+{
+  "name": "ens-resolver-test",
+  "version": "1.0.0",
+  "description": "Test script for resolving ENS names",
+  "main": "tests/resolve.test.js",
+  "scripts": {
+    "start": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node tests/resolve.test.js"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.11.0",
+    "@emotion/styled": "^11.11.0",
+    "@ensdomains/address-encoder": "^1.1.2",
+    "@ethers-ext/provider-plugin-multicoin": "^6.0.0-beta.1",
+    "@mui/icons-material": "^5.15.0",
+    "@mui/material": "^5.15.0",
+    "@reown/appkit": "^1.7.0",
+    "@reown/appkit-adapter-ethers": "^1.7.0",
+    "@types/node": "^20.11.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@types/react-router-dom": "^5.3.3",
+    "@unruggable/gateways": "^1.0.0",
+    "ethers": "^6.13.5",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^7.3.0",
+    "solc": "^0.8.28",
+    "typescript": "^5.3.0"
+  },
+  "devDependencies": {
+    "@adraffy/blocksmith": "^0.1.52",
+    "@vitejs/plugin-react": "^4.2.0",
+    "dotenv": "^16.4.7",
+    "vite": "^5.0.0"
+  }
+}
