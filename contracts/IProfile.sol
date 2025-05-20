@@ -13,6 +13,6 @@ interface IProfile {
         uint256[] coinTypes;
         
         // Content hash (ENSIP-7)
-        bytes contentHash;
+        bytes contenthash;
     }
 } 

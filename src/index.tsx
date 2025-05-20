@@ -12,7 +12,7 @@ import {
   FormControlLabel, 
   Tooltip 
 } from '@mui/material';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import DeploySubnameSolution from "./pages/DeploySubnameSolution";
 import RegisterSubname from "./pages/RegisterSubname";
 import { l1Chains } from "./constants";
@@ -171,10 +171,24 @@ const Content = ({l1ChainConfig, showMore}: {
 };
 
 const Solution = () => {
+  // User configurable state with localStorage persistence
+  const [isTestnet, setIsTestnet] = useState(() => {
+    const saved = localStorage.getItem('isTestnet');
+    return saved ? JSON.parse(saved) : true;
+  });
+  const [showMore, setShowMore] = useState(() => {
+    const saved = localStorage.getItem('showMore');
+    return saved ? JSON.parse(saved) : false;
+  });
 
-  // User configurable state
-  const [isTestnet, setIsTestnet] = useState(true);
-  const [showMore, setShowMore] = useState(false);
+  // Save state changes to localStorage
+  useEffect(() => {
+    localStorage.setItem('isTestnet', JSON.stringify(isTestnet));
+  }, [isTestnet]);
+
+  useEffect(() => {
+    localStorage.setItem('showMore', JSON.stringify(showMore));
+  }, [showMore]);
 
   const l1ChainName = isTestnet ? "Sepolia" : "Mainnet";
   const selectedL1ChainConfig = l1Chains.find(c => c.name === l1ChainName)!;

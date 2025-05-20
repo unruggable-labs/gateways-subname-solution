@@ -33,6 +33,7 @@ import {
   useAppKitProvider 
 } from '@reown/appkit/react'
 import { AppKitNetwork } from '@reown/appkit/networks';
+import { encodeContentHash, decodeContentHash,getDisplayCodec } from '@ensdomains/ensjs/utils';
 
 interface Step4RegisterSubnameProps {
   ensName: string | null;
@@ -60,6 +61,31 @@ interface AddressRecord {
   coinType: number;
   address: string;
 }
+
+// Add contenthash conversion functions
+const textToContenthash = (text: string): string => {
+  if (!text) return '0x';
+  try {
+    const encoded = encodeContentHash(text);
+    return encoded;
+  } catch (e) {
+    console.error('Error encoding content hash:', e);
+    return '0x';
+  }
+};
+
+const contenthashToText = (bytes: `0x${string}`): string => {
+  if (!bytes || bytes === '0x') return '';
+  try {
+    const decodedContentHash = decodeContentHash(bytes);
+    if (decodedContentHash !== null) {
+      return `${decodedContentHash.protocolType}://${decodedContentHash.decoded}`;
+    }
+  } catch (e) {
+    console.error('Error decoding content hash:', e);
+  }
+  return '';
+};
 
 const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
   ensName,
@@ -89,6 +115,8 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
   // Current loaded profile data
   const [textRecords, setTextRecords] = useState<TextRecord[]>([]);
   const [addresses, setAddresses] = useState<AddressRecord[]>([]);
+  const [contenthash, setContenthash] = useState<string>('');
+  const [contractVersion, setContractVersion] = useState<number>(0);
 
   // Debounced inputs
   const debouncedSubname = useDebounce(subname, 1000);
@@ -125,14 +153,18 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
       const newSigner = await provider.getSigner();
 
       try {
+        // Get contract version
+        const versionSlot = '0xa813a7c08b609c7cefba2b595bd042a9c1c1692d4d92728d902b4785c6d4d8c2';
+        const version = await provider.getStorage(deployedL2Address, versionSlot);
+        setContractVersion(Number(version));
 
         const l2Contract = new Contract(deployedL2Address, [
           'function generateProfileId(string memory name) external pure returns (bytes32)',
-          'function getProfile(bytes32 profileId) external view returns (address, string[] memory, string[] memory, uint256[] memory, bytes[] memory)'
+          'function getProfile(bytes32 profileId) external view returns (address, string[] memory, string[] memory, uint256[] memory, bytes[] memory, bytes memory)'
         ], newSigner);
 
         const profileId = await l2Contract.generateProfileId(debouncedProfileIdentifier);
-        const [owner, textKeys, textValues, coinTypes, addresses] = await l2Contract.getProfile(profileId);
+        const [owner, textKeys, textValues, coinTypes, addresses, contenthash] = await l2Contract.getProfile(profileId);
         const connectedAddress = await newSigner.getAddress();
 
         // Convert text records
@@ -141,6 +173,11 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
           value: textValues[index]
         }));
         setTextRecords(loadedTextRecords);
+
+        // Set content hash if version supports it
+        if (Number(version) >= 1) {
+          setContenthash(contenthashToText(contenthash));
+        }
 
         // Convert and encode address records
         const loadedAddresses = await Promise.all(
@@ -185,7 +222,6 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
     setSubnameSuccess(null);
 
     try {
-
       // Make sure we are on the right network
       await switchNetwork(deployedL2ChainConfig);
       const provider = new BrowserProvider(walletProvider, deployedL2ChainConfig.id);
@@ -194,9 +230,12 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
       const fullName = `${debouncedSubname}.${ensName}`;
       const node = namehash(fullName);
 
+      // Use different contract ABIs based on version
       const l2Contract = new Contract(deployedL2Address, [
-        'function register(bytes32 node, bytes32 profileId, string[] calldata textKeys, string[] calldata textValues, uint256[] calldata coinTypes, bytes[] calldata addrs) external payable',
-        'function generateProfileId(string memory name) external pure returns (bytes32)'
+        'function generateProfileId(string memory name) external pure returns (bytes32)',
+        contractVersion >= 1 
+          ? 'function register(bytes32 node, bytes32 profileId, string[] calldata textKeys, string[] calldata textValues, uint256[] calldata coinTypes, bytes[] calldata addrs, bytes calldata contenthash) external payable'
+          : 'function register(bytes32 node, bytes32 profileId, string[] calldata textKeys, string[] calldata textValues, uint256[] calldata coinTypes, bytes[] calldata addrs) external payable'
       ], newSigner);
 
       const profileId = await l2Contract.generateProfileId(profileIdentifier || 'default');
@@ -217,15 +256,26 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
       );
 
       // Register the subname with all records
-      const tx = await l2Contract.register(
-        node,
-        profileId,
-        textKeys,
-        textValues,
-        coinTypes,
-        decodedAddrs,
-        { gasLimit: 1000000 }
-      );
+      const tx = contractVersion >= 1
+        ? await l2Contract.register(
+            node,
+            profileId,
+            textKeys,
+            textValues,
+            coinTypes,
+            decodedAddrs,
+            textToContenthash(contenthash),
+            { gasLimit: 1000000 }
+          )
+        : await l2Contract.register(
+            node,
+            profileId,
+            textKeys,
+            textValues,
+            coinTypes,
+            decodedAddrs,
+            { gasLimit: 1000000 }
+          );
       await tx.wait();
 
       setSubnameSuccess((
@@ -301,6 +351,7 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
     setShowAdvancedSetup(false);
     setTextRecords([]);
     setAddresses([]);
+    setContenthash('');
     setSubnameSuccess(null);
     setSubnameError(null);
     setIsProfileLoaded(false);
@@ -533,6 +584,21 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
                               Add Address
                             </Button>
                           </Box>
+
+                          {contractVersion >= 1 && (
+                            <Box sx={{ mb: 3 }}>
+                              <Typography variant="subtitle1" gutterBottom>Content Hash</Typography>
+                              <TextField
+                                label="Content Hash"
+                                value={contenthash}
+                                onChange={(e) => setContenthash(e.target.value)}
+                                placeholder="ipfs://..."
+                                fullWidth
+                                disabled={isRegisteringSubname}
+                                sx={{ mb: 2 }}
+                              />
+                            </Box>
+                          )}
                         </>
                       )}
                     </>

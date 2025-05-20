@@ -5,6 +5,14 @@ import "./IProfile.sol";
 import "./IRegistrationController.sol";
 
 contract L2ProfileStorage {
+
+    // Version number in slot 0xa813a7c08b609c7cefba2b595bd042a9c1c1692d4d92728d902b4785c6d4d8c2
+    // https://ethtools.com/hash-generator/convert-utf8-to-keccak-256/L2ProfileStorage.version
+    // Version 0: Initial implementation
+    // Version 1: Added contenthash support to the register function
+    uint256 private constant VERSION_SLOT = 0xa813a7c08b609c7cefba2b595bd042a9c1c1692d4d92728d902b4785c6d4d8c2;
+    uint256 private constant VERSION = 1;
+
     // Mapping from profileId => Profile
     mapping(bytes32 => IProfile.Profile) private profiles;
     
@@ -41,6 +49,10 @@ contract L2ProfileStorage {
 
     constructor() {
         owner = msg.sender;
+        // Set version in storage slot
+        assembly {
+            sstore(VERSION_SLOT, VERSION)
+        }
     }
 
     function transferOwnership(address newOwner) external onlyOwner {
@@ -90,9 +102,10 @@ contract L2ProfileStorage {
     }   
     
     // Register a name and update the profile at the same time
-    function register(bytes32 node, bytes32 profileId, string[] calldata textKeys, string[] calldata textValues, uint256[] calldata coinTypes, bytes[] calldata addrs) external payable ensureProfileOwner(profileId) {
+    function register(bytes32 node, bytes32 profileId, string[] calldata textKeys, string[] calldata textValues, uint256[] calldata coinTypes, bytes[] calldata addrs, bytes calldata contenthash) external payable ensureProfileOwner(profileId) {
         _updateAddresses(profileId, coinTypes, addrs);
         _updateTextRecords(profileId, textKeys, textValues);
+        _setContenthash(profileId, contenthash);
         _register(node, profileId);
     }
 
@@ -191,7 +204,7 @@ contract L2ProfileStorage {
     }
 
     function _setContenthash(bytes32 profileId, bytes calldata contenthash) internal {
-        profiles[profileId].contentHash = contenthash;
+        profiles[profileId].contenthash = contenthash;
         emit ContenthashSet(profileId, contenthash);
     }
     
@@ -202,10 +215,11 @@ contract L2ProfileStorage {
         string[] memory textKeys, 
         string[] memory textValues,
         uint256[] memory coinTypes, 
-        bytes[] memory addrs
+        bytes[] memory addrs,
+        bytes memory contenthash
     ) {
         profileId = nodeProfiles[node];
-        (profileOwner, textKeys, textValues, coinTypes, addrs) = getProfile(profileId);
+        (profileOwner, textKeys, textValues, coinTypes, addrs, contenthash) = getProfile(profileId);
     }
 
     // Gets the profile data for a profileId
@@ -214,13 +228,15 @@ contract L2ProfileStorage {
         string[] memory textKeys, 
         string[] memory textValues,
         uint256[] memory coinTypes, 
-        bytes[] memory addrs
+        bytes[] memory addrs,
+        bytes memory contenthash
     ) {
         IProfile.Profile storage profile = profiles[profileId];
         profileOwner = profile.owner;
 
         (textKeys, textValues) = getAllTextRecords(profileId);
         (coinTypes, addrs) = getAllAddresses(profileId);
+        contenthash = profile.contenthash;
     }
     
     // Gets a text record for a specified profile ID
@@ -275,5 +291,19 @@ contract L2ProfileStorage {
     function isNameAvailable(bytes32 node) external view returns (bool) {
         bytes32 profileId = nodeProfiles[node];
         return profiles[profileId].owner == address(0);
+    }
+
+    // Function to get the contract version
+    function getVersion() external view returns (uint256) {
+        uint256 version;
+        assembly {
+            version := sload(VERSION_SLOT)
+        }
+        return version;
+    }
+
+    // Gets the contenthash for a specified profile ID
+    function getContenthash(bytes32 profileId) external view returns (bytes memory) {
+        return profiles[profileId].contenthash;
     }
 } 
