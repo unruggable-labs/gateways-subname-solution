@@ -101,17 +101,23 @@ contract L2ProfileStorage {
         }
     }   
     
-    // Register a name and update the profile at the same time
-    function register(bytes32 node, bytes32 profileId, string[] calldata textKeys, string[] calldata textValues, uint256[] calldata coinTypes, bytes[] calldata addrs, bytes calldata contenthash) external payable ensureProfileOwner(profileId) {
-        _updateAddresses(profileId, coinTypes, addrs);
-        _updateTextRecords(profileId, textKeys, textValues);
-        _setContenthash(profileId, contenthash);
-        _register(node, profileId);
-    }
-
     // Register a name
     function register(bytes32 node, bytes32 profileId) external payable ensureProfileOwner(profileId) {
         _register(node, profileId);
+    }
+
+    // Update profile data
+    function updateProfileData(
+        bytes32 profileId, 
+        string[] calldata textKeys, 
+        string[] calldata textValues, 
+        uint256[] calldata coinTypes, 
+        bytes[] calldata addrs,
+        bytes calldata contenthash
+    ) external payable ensureProfileOwner(profileId) {
+        _updateAddresses(profileId, coinTypes, addrs);
+        _updateTextRecords(profileId, textKeys, textValues);
+        _setContenthash(profileId, contenthash);
     }
 
     // Internal function to register a name
@@ -134,7 +140,6 @@ contract L2ProfileStorage {
 
         emit NameRegistered(node, profileId);
     }
-
 
     // Helper function to generate a profileId from a key
     function generateProfileId(string calldata key) public pure returns (bytes32) {

@@ -25,7 +25,7 @@ async function main() {
     });
 
     // Generate a profile ID
-    const PROFILE_ID = await L2ProfileStorage.getProfileId("thomas");
+    const PROFILE_ID = await L2ProfileStorage.generateProfileId("thomas");
 
     // Set the profile records
     await foundry.confirm(
@@ -39,6 +39,13 @@ async function main() {
     await foundry.confirm(
         L2ProfileStorage.setText(PROFILE_ID, "test", "testvalue")
     );
+
+    const VITALIK_CONTENTHASH = "0xe30101701220e9506b1f5f304004c066f0e14cc39da8f980777ced7a8156aa49ba31780e2195";
+    await foundry.confirm(
+        L2ProfileStorage.setContenthash(PROFILE_ID, VITALIK_CONTENTHASH)
+    );
+
+    console.log("Contenthash: ", await L2ProfileStorage.getContenthash(PROFILE_ID));
 
     await foundry.confirm(
         L2ProfileStorage.register(NODE, PROFILE_ID)
@@ -75,18 +82,20 @@ async function main() {
         // Instantiate the ethers.js EnsResolver which automatically decodes ENSIP-10 call responses
         const resolver = new EnsResolver(foundry.provider, Resolver.target, name);
 
-        const [supportsWildcard, address, addressEth, text] = await Promise.all([
+        const [supportsWildcard, address, addressEth, text, contenthash] = await Promise.all([
           resolver.supportsWildcard(),
           resolver.getAddress(coinType),
           resolver.getAddress(),
-          resolver.getText("test")
+          resolver.getText("test"),
+          resolver.getContentHash()
         ]);
         console.log({
           name,
           supportsWildcard,
           address,
           addressEth,
-          text
+          text,
+          contenthash
         });
     }
 

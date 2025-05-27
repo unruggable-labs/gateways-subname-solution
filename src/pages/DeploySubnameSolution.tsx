@@ -24,7 +24,7 @@ import {
   ChainConfig,
 } from '../constants';
 
-// Add tab constants
+// Tab constants
 const TABS = {
   L2_STORAGE: 0,
   L1_RESOLVER: 1,

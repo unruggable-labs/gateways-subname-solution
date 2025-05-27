@@ -62,7 +62,7 @@ interface AddressRecord {
   address: string;
 }
 
-// Add contenthash conversion functions
+// Contenthash conversion functions
 const textToContenthash = (text: string): string => {
   if (!text) return '0x';
   try {
@@ -118,6 +118,11 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
   const [contenthash, setContenthash] = useState<string>('');
   const [contractVersion, setContractVersion] = useState<number>(0);
 
+  // Track loaded data for comparison
+  const [loadedTextRecords, setLoadedTextRecords] = useState<TextRecord[]>([]);
+  const [loadedAddresses, setLoadedAddresses] = useState<AddressRecord[]>([]);
+  const [loadedContenthash, setLoadedContenthash] = useState<string>('');
+
   // Debounced inputs
   const debouncedSubname = useDebounce(subname, 1000);
   const debouncedProfileIdentifier = useDebounce(profileIdentifier, 1000);
@@ -130,6 +135,156 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
 		...rest 
 	} 													= useAppKitAccount()
 
+  // State for edit mode
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
+  const [hasProfileChanges, setHasProfileChanges] = useState(false);
+
+  // State for profile save success
+  const [profileSaveSuccess, setProfileSaveSuccess] = useState<string | null>(null);
+
+  // Check if profile has changes
+  const checkProfileChanges = () => {
+    if (!isProfileLoaded) return false;
+    
+    // Check text records
+    const textRecordsChanged = textRecords.some((record, index) => {
+      const originalRecord = loadedTextRecords[index];
+      return !originalRecord || 
+             record.key !== originalRecord.key || 
+             record.value !== originalRecord.value;
+    });
+
+    // Check addresses
+    const addressesChanged = addresses.some((record, index) => {
+      const originalRecord = loadedAddresses[index];
+      return !originalRecord || 
+             record.coinType !== originalRecord.coinType || 
+             record.address !== originalRecord.address;
+    });
+
+    // Check contenthash
+    const contenthashChanged = contenthash !== loadedContenthash;
+
+    return textRecordsChanged || addressesChanged || contenthashChanged;
+  };
+
+  // Handler function to update profile
+  const updateProfile = async () => {
+    if (!signerAddress || !profileIdentifier || !deployedL2Address || !deployedL2ChainConfig) return;
+    
+    setIsUpdatingProfile(true);
+    setProfileError(null);
+    setProfileSaveSuccess(null);
+
+    try {
+      await switchNetwork(deployedL2ChainConfig);
+      const provider = new BrowserProvider(walletProvider, deployedL2ChainConfig.id);
+      const newSigner = await provider.getSigner();
+
+      const l2Contract = new Contract(deployedL2Address, [
+        'function generateProfileId(string memory name) external pure returns (bytes32)',
+        'function updateProfileData(bytes32 profileId, string[] calldata textKeys, string[] calldata textValues, uint256[] calldata coinTypes, bytes[] calldata addrs, bytes calldata contenthash) external payable'
+      ], newSigner);
+
+      const profileId = await l2Contract.generateProfileId(profileIdentifier);
+
+      const textKeys = textRecords.map(record => record.key);
+      const textValues = textRecords.map(record => record.value);
+      const coinTypes = addresses.map(record => record.coinType);
+      const decodedAddrs = await Promise.all(
+        addresses.map(async record => {
+          const coder = getCoderByCoinType(Number(record.coinType));
+          const decoded = coder ? await coder.decode(record.address) : [];
+          const padded = new Uint8Array(32);
+          padded.set(decoded, 32 - decoded.length);
+          return padded;
+        })
+      );
+
+      const tx = await l2Contract.updateProfileData(
+        profileId,
+        textKeys,
+        textValues,
+        coinTypes,
+        decodedAddrs,
+        textToContenthash(contenthash),
+        { gasLimit: 1000000 }
+      );
+      await tx.wait();
+
+      // Update loaded data
+      setLoadedTextRecords([...textRecords]);
+      setLoadedAddresses([...addresses]);
+      setLoadedContenthash(contenthash);
+      setIsEditMode(false);
+      setHasProfileChanges(false);
+      setProfileSaveSuccess('Profile saved successfully!');
+
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      setProfileError((error as Error).message);
+    } finally {
+      setIsUpdatingProfile(false);
+    }
+  };
+
+  const handleSubnameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSubname(e.target.value.toLowerCase());
+    setProfileSaveSuccess(null);
+  };
+
+  const registerSubname = async () => {
+    if (!signerAddress || !debouncedSubname || !ensName || !deployedL2Address || !deployedL2ChainConfig) return;
+    
+    setIsRegisteringSubname(true);
+    setSubnameError(null);
+    setSubnameSuccess(null);
+    setProfileSaveSuccess(null);
+
+    try {
+      await switchNetwork(deployedL2ChainConfig);
+      const provider = new BrowserProvider(walletProvider, deployedL2ChainConfig.id);
+      const newSigner = await provider.getSigner();
+
+      const fullName = `${debouncedSubname}.${ensName}`;
+      const node = namehash(fullName);
+
+      const l2Contract = new Contract(deployedL2Address, [
+        'function generateProfileId(string memory name) external pure returns (bytes32)',
+        'function register(bytes32 node, bytes32 profileId) external payable'
+      ], newSigner);
+
+      const profileId = await l2Contract.generateProfileId(profileIdentifier || 'default');
+
+      // Register the subname
+      const tx = await l2Contract.register(
+        node,
+        profileId,
+        { gasLimit: 1000000 }
+      );
+      await tx.wait();
+
+      setSubnameSuccess((
+        <>
+          Successfully registered <strong>{fullName}</strong>!
+        </>
+      ));
+
+    } catch (error) {
+      console.error('Error registering subname:', error);
+      setSubnameError((error as Error).message);
+    } finally {
+      setIsRegisteringSubname(false);
+    }
+  };
+
+  // useEffect to check for profile changes
+  useEffect(() => {
+    if (isProfileLoaded) {
+      setHasProfileChanges(checkProfileChanges());
+    }
+  }, [textRecords, addresses, contenthash, isProfileLoaded]);
 
   // Check subname availability once debounced
   useEffect(() => {
@@ -147,12 +302,12 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
       setProfileError(null);
       setIsProfileLoaded(false);
 
-      // Make sure we are on the right network
-      await switchNetwork(deployedL2ChainConfig);
-      const provider = new BrowserProvider(walletProvider, deployedL2ChainConfig.id);
-      const newSigner = await provider.getSigner();
-
       try {
+        // Make sure we are on the right network
+        await switchNetwork(deployedL2ChainConfig);
+        const provider = new BrowserProvider(walletProvider, deployedL2ChainConfig.id);
+        const newSigner = await provider.getSigner();
+
         // Get contract version
         const versionSlot = '0xa813a7c08b609c7cefba2b595bd042a9c1c1692d4d92728d902b4785c6d4d8c2';
         const version = await provider.getStorage(deployedL2Address, versionSlot);
@@ -173,10 +328,13 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
           value: textValues[index]
         }));
         setTextRecords(loadedTextRecords);
+        setLoadedTextRecords(loadedTextRecords);
 
         // Set content hash if version supports it
         if (Number(version) >= 1) {
-          setContenthash(contenthashToText(contenthash));
+          const decodedContentHash = contenthashToText(contenthash);
+          setContenthash(decodedContentHash);
+          setLoadedContenthash(decodedContentHash);
         }
 
         // Convert and encode address records
@@ -194,6 +352,7 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
           })
         );
         setAddresses(loadedAddresses);
+        setLoadedAddresses(loadedAddresses);
 
         setIsProfileLoaded(true);
 
@@ -212,85 +371,6 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
 
     loadProfileData();
   }, [debouncedProfileIdentifier]);
-
-  // Handler to do the actual subname registration
-  const registerSubname = async () => {
-    if (!signerAddress || !debouncedSubname || !ensName || !deployedL2Address || !deployedL2ChainConfig) return;
-    
-    setIsRegisteringSubname(true);
-    setSubnameError(null);
-    setSubnameSuccess(null);
-
-    try {
-      // Make sure we are on the right network
-      await switchNetwork(deployedL2ChainConfig);
-      const provider = new BrowserProvider(walletProvider, deployedL2ChainConfig.id);
-      const newSigner = await provider.getSigner();
-
-      const fullName = `${debouncedSubname}.${ensName}`;
-      const node = namehash(fullName);
-
-      // Use different contract ABIs based on version
-      const l2Contract = new Contract(deployedL2Address, [
-        'function generateProfileId(string memory name) external pure returns (bytes32)',
-        contractVersion >= 1 
-          ? 'function register(bytes32 node, bytes32 profileId, string[] calldata textKeys, string[] calldata textValues, uint256[] calldata coinTypes, bytes[] calldata addrs, bytes calldata contenthash) external payable'
-          : 'function register(bytes32 node, bytes32 profileId, string[] calldata textKeys, string[] calldata textValues, uint256[] calldata coinTypes, bytes[] calldata addrs) external payable'
-      ], newSigner);
-
-      const profileId = await l2Contract.generateProfileId(profileIdentifier || 'default');
-
-      const textKeys = textRecords.map(record => record.key);
-      const textValues = textRecords.map(record => record.value);
-
-      // Decode address records
-      const coinTypes = addresses.map(record => record.coinType);
-      const decodedAddrs = await Promise.all(
-        addresses.map(async record => {
-          const coder = getCoderByCoinType(Number(record.coinType));
-          const decoded = coder ? await coder.decode(record.address) : [];
-          const padded = new Uint8Array(32);
-          padded.set(decoded, 32 - decoded.length);
-          return padded;
-        })
-      );
-
-      // Register the subname with all records
-      const tx = contractVersion >= 1
-        ? await l2Contract.register(
-            node,
-            profileId,
-            textKeys,
-            textValues,
-            coinTypes,
-            decodedAddrs,
-            textToContenthash(contenthash),
-            { gasLimit: 1000000 }
-          )
-        : await l2Contract.register(
-            node,
-            profileId,
-            textKeys,
-            textValues,
-            coinTypes,
-            decodedAddrs,
-            { gasLimit: 1000000 }
-          );
-      await tx.wait();
-
-      setSubnameSuccess((
-        <>
-          Successfully registered <strong>{fullName}</strong>!
-        </>
-      ));
-
-    } catch (error) {
-      console.error('Error registering subname:', error);
-      setSubnameError((error as Error).message);
-    } finally {
-      setIsRegisteringSubname(false);
-    }
-  };
 
   // Handler to check subname availability
   const checkSubnameAvailability = async () => {
@@ -335,13 +415,16 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
     ? "Please enter a subname"
     : !subnameAvailable
     ? "This subname is not available"
+    : isEditMode
+    ? "Please save or cancel profile changes before registering"
     : null;
 
   const isRegisterSubnameDisabled = Boolean(
     !deployedL2Address ||
     !subname ||
     !subnameAvailable ||
-    isRegisteringSubname
+    isRegisteringSubname ||
+    isEditMode
   );
 
   // Reset the form to register another subname
@@ -370,7 +453,7 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
             <TextField
               label="Subname"
               value={subname}
-              onChange={(e) => setSubname(e.target.value.toLowerCase())}
+              onChange={handleSubnameChange}
               placeholder="mysubname"
               sx={{ flexGrow: 1 }}
               disabled={isRegisteringSubname}
@@ -444,160 +527,224 @@ const RegisterSubnameComponent: React.FC<Step4RegisterSubnameProps> = ({
                               </Typography>
                             </Box>
                           )}
-                          {isProfileLoaded && textRecords.length === 0 && addresses.length === 0 && (
-                            <Box sx={{ mb: 2, p: 2, bgcolor: '#fff9c4', borderRadius: 1, border: '1px solid #fdd835' }}>
-                              <Typography variant="subtitle2" sx={{ color: '#5d4037' }}>
-                                This is a new profile. Add text records and addresses below.
-                              </Typography>
-                            </Box>
-                          )}
-                          <Box sx={{ mb: 3 }}>
-                            <Typography variant="subtitle1" gutterBottom>Text Records</Typography>
-                            {textRecords.map((record, index) => (
-                              <Box key={index} sx={{ display: 'flex', gap: 2, mb: 1 }}>
-                                <TextField
-                                  label="Key"
-                                  value={record.key}
-                                  onChange={(e) => {
-                                    const updatedRecords = [...textRecords];
-                                    updatedRecords[index] = { ...record, key: e.target.value };
-                                    setTextRecords(updatedRecords);
-                                  }}
-                                  sx={{ flex: 1 }}
-                                  disabled={isRegisteringSubname}
-                                />
-                                <TextField
-                                  label="Value"
-                                  value={record.value}
-                                  onChange={(e) => {
-                                    const updatedRecords = [...textRecords];
-                                    updatedRecords[index] = { ...record, value: e.target.value };
-                                    setTextRecords(updatedRecords);
-                                  }}
-                                  sx={{ flex: 1 }}
-                                  disabled={isRegisteringSubname}
-                                />
-                                <Button
-                                  variant="outlined"
-                                  color="error"
-                                  onClick={() => {
-                                    setTextRecords(textRecords.filter((_, i) => i !== index));
-                                  }}
-                                  disabled={isRegisteringSubname}
-                                >
-                                  Remove
-                                </Button>
-                              </Box>
-                            ))}
-                            <Button 
-                              variant="outlined" 
-                              color="primary"
-                              onClick={() => {
-                                setTextRecords([...textRecords, { key: '', value: '' }]);
-                              }}
-                              sx={{ mt: 1 }}
-                              disabled={isRegisteringSubname}
-                            >
-                              Add Text Record
-                            </Button>
-                          </Box>
-
-                          <Box sx={{ mb: 3 }}>
-                            <Typography variant="subtitle1" gutterBottom>Addresses</Typography>
-                            {addresses.map((record, index) => (
-                              <Box key={index} sx={{ display: 'flex', gap: 2, mb: 1 }}>
-                                <FormControl sx={{ minWidth: 120 }}>
-                                  <InputLabel>Coin Type</InputLabel>
-                                  <Select
-                                    value={record.coinType.toString()}
-                                    label="Coin Type"
-                                    onChange={(e) => {
-                                      const newCoinType = parseInt(e.target.value);
-                                      const updatedAddresses = [...addresses];
-                                      updatedAddresses[index] = { ...record, coinType: newCoinType };
-                                      setAddresses(updatedAddresses);
-                                    }}
-                                    disabled={isRegisteringSubname}
+                          {isProfileLoaded && (
+                            <>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                                <Typography variant="subtitle1">Profile Data</Typography>
+                                {!isEditMode ? (
+                                  <Button
+                                    variant="outlined"
+                                    onClick={() => setIsEditMode(true)}
+                                    disabled={isRegisteringSubname || isUpdatingProfile}
                                   >
-                                    {(() => {
-                                      const availableCoins = COIN_TYPES.filter(coin => {
-                                        // Always show the current record's coin type
-                                        if (coin.value === record.coinType) return true;
-                                        
-                                        // For other records, check if this coin type is already used
-                                        const isUsedElsewhere = addresses.some((addr, idx) => 
-                                          addr.coinType === coin.value && idx !== index
-                                        );
-                                        return !isUsedElsewhere;
-                                      });
-                                      return availableCoins.map((coin) => (
-                                        <MenuItem key={coin.value} value={coin.value.toString()}>
-                                          {coin.label}
-                                        </MenuItem>
-                                      ));
-                                    })()}
-                                  </Select>
-                                </FormControl>
-                                <TextField
-                                  label="Address"
-                                  value={record.address}
-                                  onChange={async (e) => {
-                                    const updatedAddresses = [...addresses];
-                                    updatedAddresses[index] = { ...record, address: e.target.value };
+                                    Edit Profile
+                                  </Button>
+                                ) : (
+                                  <Box sx={{ display: 'flex', gap: 1 }}>
+                                    <Button
+                                      variant="outlined"
+                                      color="error"
+                                      onClick={() => {
+                                        setIsEditMode(false);
+                                        setTextRecords([...loadedTextRecords]);
+                                        setAddresses([...loadedAddresses]);
+                                        setContenthash(loadedContenthash);
+                                      }}
+                                      disabled={isRegisteringSubname || isUpdatingProfile}
+                                    >
+                                      Cancel
+                                    </Button>
+                                    <Button
+                                      variant="contained"
+                                      onClick={updateProfile}
+                                      disabled={!hasProfileChanges || isRegisteringSubname || isUpdatingProfile}
+                                    >
+                                      {isUpdatingProfile ? (
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                          <CircularProgress size={20} color="inherit" />
+                                          Updating...
+                                        </Box>
+                                      ) : (
+                                        'Save Changes'
+                                      )}
+                                    </Button>
+                                  </Box>
+                                )}
+                              </Box>
 
-                                    setAddresses(updatedAddresses);
-                                  }}
-                                  sx={{ flex: 1 }}
-                                  disabled={isRegisteringSubname}
-                                />
-                                <Button
-                                  variant="outlined"
-                                  color="error"
+                              {profileSaveSuccess && (
+                                <Box sx={{ mb: 2 }}>
+                                  <SuccessBox>
+                                    {profileSaveSuccess}
+                                  </SuccessBox>
+                                </Box>
+                              )}
+
+                              <Box sx={{ mb: 3 }}>
+                                <Typography variant="subtitle1" gutterBottom>Text Records</Typography>
+                                <Box sx={{ 
+                                  opacity: isEditMode ? 1 : 0.7,
+                                  cursor: isEditMode ? 'default' : 'not-allowed',
+                                  pointerEvents: isEditMode ? 'auto' : 'none'
+                                }}>
+                                  {textRecords.map((record, index) => (
+                                    <Box key={index} sx={{ display: 'flex', gap: 2, mb: 1 }}>
+                                      <TextField
+                                        label="Key"
+                                        value={record.key}
+                                        onChange={(e) => {
+                                          const updatedRecords = [...textRecords];
+                                          updatedRecords[index] = { ...record, key: e.target.value };
+                                          setTextRecords(updatedRecords);
+                                        }}
+                                        sx={{ flex: 1 }}
+                                        disabled={!isEditMode || isRegisteringSubname || isUpdatingProfile}
+                                      />
+                                      <TextField
+                                        label="Value"
+                                        value={record.value}
+                                        onChange={(e) => {
+                                          const updatedRecords = [...textRecords];
+                                          updatedRecords[index] = { ...record, value: e.target.value };
+                                          setTextRecords(updatedRecords);
+                                        }}
+                                        sx={{ flex: 1 }}
+                                        disabled={!isEditMode || isRegisteringSubname || isUpdatingProfile}
+                                      />
+                                      {isEditMode && (
+                                        <Button
+                                          variant="outlined"
+                                          color="error"
+                                          onClick={() => {
+                                            setTextRecords(textRecords.filter((_, i) => i !== index));
+                                          }}
+                                          disabled={isRegisteringSubname || isUpdatingProfile}
+                                        >
+                                          Remove
+                                        </Button>
+                                      )}
+                                    </Box>
+                                  ))}
+                                </Box>
+                                <Button 
+                                  variant="outlined" 
+                                  color="primary"
                                   onClick={() => {
-                                    setAddresses(addresses.filter((_, i) => i !== index));
+                                    setTextRecords([...textRecords, { key: '', value: '' }]);
                                   }}
-                                  disabled={isRegisteringSubname}
+                                  sx={{ mt: 1 }}
+                                  disabled={!isEditMode || isRegisteringSubname || isUpdatingProfile}
                                 >
-                                  Remove
+                                  Add Text Record
                                 </Button>
                               </Box>
-                            ))}
-                            <Button 
-                              variant="outlined" 
-                              color="primary"
-                              onClick={() => {
-                                // Find the first available coin type
-                                const usedCoinTypes = addresses.map(addr => Number(addr.coinType));
-                                const nextAvailableCoin = COIN_TYPES.find(coin => !usedCoinTypes.includes(coin.value));
-                                if (nextAvailableCoin) {
-                                  const newAddress = { coinType: nextAvailableCoin.value, address: '' };
-                                  setAddresses(currentAddresses => {
-                                    const updatedAddresses = [...currentAddresses];
-                                    updatedAddresses.push(newAddress);
-                                    return updatedAddresses;
-                                  });
-                                }
-                              }}
-                              disabled={addresses.length >= COIN_TYPES.length || isRegisteringSubname}
-                              sx={{ mt: 1 }}
-                            >
-                              Add Address
-                            </Button>
-                          </Box>
 
-                          {contractVersion >= 1 && (
-                            <Box sx={{ mb: 3 }}>
-                              <Typography variant="subtitle1" gutterBottom>Content Hash</Typography>
-                              <TextField
-                                label="Content Hash"
-                                value={contenthash}
-                                onChange={(e) => setContenthash(e.target.value)}
-                                placeholder="ipfs://..."
-                                fullWidth
-                                disabled={isRegisteringSubname}
-                                sx={{ mb: 2 }}
-                              />
-                            </Box>
+                              <Box sx={{ mb: 3 }}>
+                                <Typography variant="subtitle1" gutterBottom>Addresses</Typography>
+                                <Box sx={{ 
+                                  opacity: isEditMode ? 1 : 0.7,
+                                  cursor: isEditMode ? 'default' : 'not-allowed',
+                                  pointerEvents: isEditMode ? 'auto' : 'none'
+                                }}>
+                                  {addresses.map((record, index) => (
+                                    <Box key={index} sx={{ display: 'flex', gap: 2, mb: 1 }}>
+                                      <FormControl sx={{ minWidth: 120 }}>
+                                        <InputLabel>Coin Type</InputLabel>
+                                        <Select
+                                          value={record.coinType.toString()}
+                                          label="Coin Type"
+                                          onChange={(e) => {
+                                            const newCoinType = parseInt(e.target.value);
+                                            const updatedAddresses = [...addresses];
+                                            updatedAddresses[index] = { ...record, coinType: newCoinType };
+                                            setAddresses(updatedAddresses);
+                                          }}
+                                          disabled={!isEditMode || isRegisteringSubname || isUpdatingProfile}
+                                        >
+                                          {(() => {
+                                            const availableCoins = COIN_TYPES.filter(coin => {
+                                              // Always show the current record's coin type
+                                              if (coin.value === record.coinType) return true;
+                                              
+                                              // For other records, check if this coin type is already used
+                                              const isUsedElsewhere = addresses.some((addr, idx) => 
+                                                addr.coinType === coin.value && idx !== index
+                                              );
+                                              return !isUsedElsewhere;
+                                            });
+                                            return availableCoins.map((coin) => (
+                                              <MenuItem key={coin.value} value={coin.value.toString()}>
+                                                {coin.label}
+                                              </MenuItem>
+                                            ));
+                                          })()}
+                                        </Select>
+                                      </FormControl>
+                                      <TextField
+                                        label="Address"
+                                        value={record.address}
+                                        onChange={async (e) => {
+                                          const updatedAddresses = [...addresses];
+                                          updatedAddresses[index] = { ...record, address: e.target.value };
+                                          setAddresses(updatedAddresses);
+                                        }}
+                                        sx={{ flex: 1 }}
+                                        disabled={!isEditMode || isRegisteringSubname || isUpdatingProfile}
+                                      />
+                                      {isEditMode && (
+                                        <Button
+                                          variant="outlined"
+                                          color="error"
+                                          onClick={() => {
+                                            setAddresses(addresses.filter((_, i) => i !== index));
+                                          }}
+                                          disabled={isRegisteringSubname || isUpdatingProfile}
+                                        >
+                                          Remove
+                                        </Button>
+                                      )}
+                                    </Box>
+                                  ))}
+                                </Box>
+                                <Button 
+                                  variant="outlined" 
+                                  color="primary"
+                                  onClick={() => {
+                                    // Find the first available coin type
+                                    const usedCoinTypes = addresses.map(addr => Number(addr.coinType));
+                                    const nextAvailableCoin = COIN_TYPES.find(coin => !usedCoinTypes.includes(coin.value));
+                                    if (nextAvailableCoin) {
+                                      setAddresses([...addresses, { coinType: nextAvailableCoin.value, address: '' }]);
+                                    }
+                                  }}
+                                  disabled={!isEditMode || addresses.length >= COIN_TYPES.length || isRegisteringSubname || isUpdatingProfile}
+                                  sx={{ mt: 1 }}
+                                >
+                                  Add Address
+                                </Button>
+                              </Box>
+
+                              {contractVersion >= 1 && (
+                                <Box sx={{ mb: 3 }}>
+                                  <Typography variant="subtitle1" gutterBottom>Content Hash</Typography>
+                                  <Box sx={{ 
+                                    opacity: isEditMode ? 1 : 0.7,
+                                    cursor: isEditMode ? 'default' : 'not-allowed',
+                                    pointerEvents: isEditMode ? 'auto' : 'none'
+                                  }}>
+                                    <TextField
+                                      label="Content Hash"
+                                      value={contenthash}
+                                      onChange={(e) => setContenthash(e.target.value)}
+                                      placeholder="ipfs://..."
+                                      fullWidth
+                                      disabled={!isEditMode || isRegisteringSubname || isUpdatingProfile}
+                                      sx={{ mb: 2 }}
+                                    />
+                                  </Box>
+                                </Box>
+                              )}
+                            </>
                           )}
                         </>
                       )}

@@ -51,19 +51,19 @@ const RegisterSubname = ({ l1ChainConfig, showMore }: RegisterSubnameProps) => {
   const [isValidating, setIsValidating] = useState(false);
   const [isValidated, setIsValidated] = useState(false);
 
-  // Add ref for the log container
+  // Ref for the log container
   const logContainerRef = useRef<HTMLDivElement>(null);
 
   const {switchNetwork } = useAppKitNetwork()
 
-  // Add effect to scroll to bottom when logs change
+  // Effect to scroll to bottom when logs change
   useEffect(() => {
     if (logContainerRef.current) {
       logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
     }
   }, [validationLogs]);
 
-  // Add log message
+  // Log message helper function
   const addLog = (message: string) => {
     setValidationLogs(logs => [...logs, { message, timestamp: new Date() }]);
   };

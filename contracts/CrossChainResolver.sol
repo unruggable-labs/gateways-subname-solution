@@ -216,6 +216,6 @@ contract CrossChainResolver is GatewayFetchTarget {
     
 
     function contenthashCallback(bytes[] calldata values, uint8, bytes calldata) external pure returns (bytes memory) {
-        return values[1];
+        return abi.encode(values[1]);
     }
 } 

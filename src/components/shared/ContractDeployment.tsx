@@ -359,7 +359,7 @@ const ContractDeployment: React.FC<ContractDeploymentProps> = ({
                 checkUrl.searchParams.append('module', 'contract');
                 checkUrl.searchParams.append('action', 'checkverifystatus');
                 checkUrl.searchParams.append('guid', guid);
-                checkUrl.searchParams.append('chainid', deploymentChainConfig.chainId.toString()); // Add chainId parameter
+                checkUrl.searchParams.append('chainid', deploymentChainConfig.chainId.toString());
 
                 console.log('Checking verification status at:', checkUrl.toString());
 
